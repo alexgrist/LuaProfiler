@@ -1,6 +1,6 @@
 --[[
 	Lua Profiler (1.0 dev)
-	
+
 	Alexander Grist-Hucker
 	http://www.revotech.org
 --]]
@@ -18,6 +18,11 @@ if (SERVER) then
 	AddCSLuaFile();
 end;
 
+if (!ConVarExists("profiler_enabled")) then
+	CreateConVar("profiler_enabled", "1", FCVAR_NONE);
+end;
+
+local ProfilerEnabled = 1;
 local ProfilerStored = {};
 local ProfilerData = {};
 local ProfilerTime = 0;
@@ -25,23 +30,29 @@ local ProfilerTime = 0;
 profiler = {};
 
 function profiler.Call(name, uniqueID, func, ...)
-	if (!ProfilerStored[name]) then
-		ProfilerStored[name] = {};
+	if (GetConVarNumber("profiler_enabled") == 1) then
+		if (!ProfilerStored[name]) then
+			ProfilerStored[name] = {};
+		end;
+
+		if (!ProfilerStored[name][uniqueID]) then
+			ProfilerStored[name][uniqueID] = {
+				times = {}, min = 0, max = 0, avg = 0 
+			};
+		end;
+
+		local startTime = SysTime();
+			local result = {pcall(func, ...)};
+		table.insert(ProfilerStored[name][uniqueID].times, SysTime() - startTime);
+
+		if (#ProfilerStored[name][uniqueID].times >= 5) then
+			table.remove(ProfilerStored[name][uniqueID].times);
+		end;
+
+		return unpack(result);
 	end;
 
-	if (!ProfilerStored[name][uniqueID]) then
-		ProfilerStored[name][uniqueID] = {
-			times = {}, min = 0, max = 0, avg = 0 
-		};
-	end;
-
-	local startTime = SysTime();
-		local result = {pcall(func, ...)};
-	table.insert(ProfilerStored[name][uniqueID].times, SysTime() - startTime);
-
-	if (#ProfilerStored[name][uniqueID].times >= 5) then
-		table.remove(ProfilerStored[name][uniqueID].times);
-	end;
+	local result = {pcall(func, ...)};
 
 	return unpack(result);
 end;
@@ -92,34 +103,41 @@ function profiler.GetData()
 end;
 
 timer.Create("Profiler", 1, 0, function()
-	ProfilerTime = 0;
-	ProfilerData = {};
+	if (GetConVarNumber("profiler_enabled") == 1) then
+		ProfilerTime = 0;
+		ProfilerData = {};
 
-	for k, v in pairs(ProfilerStored) do
-		for k2, v2 in pairs(v) do
-			ProfilerStored[k][k2].min = math.min(unpack(ProfilerStored[k][k2].times));
-			ProfilerStored[k][k2].max = math.max(unpack(ProfilerStored[k][k2].times));
+		for k, v in pairs(ProfilerStored) do
+			for k2, v2 in pairs(v) do
+				ProfilerStored[k][k2].min = math.min(unpack(ProfilerStored[k][k2].times));
+				ProfilerStored[k][k2].max = math.max(unpack(ProfilerStored[k][k2].times));
 
-			for i = 1, #ProfilerStored[k][k2].times, 1 do
-				ProfilerStored[k][k2].avg = ProfilerStored[k][k2].avg + ProfilerStored[k][k2].times[i];
+				for i = 1, #ProfilerStored[k][k2].times, 1 do
+					ProfilerStored[k][k2].avg = ProfilerStored[k][k2].avg + ProfilerStored[k][k2].times[i];
+				end;
+
+				ProfilerStored[k][k2].avg = ProfilerStored[k][k2].avg / #ProfilerStored[k][k2].times;
+
+				ProfilerTime = ProfilerTime + (ProfilerStored[k][k2].avg or 0);
+
+				ProfilerData[k] = ProfilerData[k] or {};
+				ProfilerData[k].time = (ProfilerData[k].time or 0) + (ProfilerStored[k][k2].avg or 0);
+				ProfilerData[k].stored = ProfilerData[k].stored or {};
+				ProfilerData[k].stored[k2] = ProfilerStored[k][k2].avg;
 			end;
-
-			ProfilerStored[k][k2].avg = ProfilerStored[k][k2].avg / #ProfilerStored[k][k2].times;
-
-			ProfilerTime = ProfilerTime + (ProfilerStored[k][k2].avg or 0);
-
-			ProfilerData[k] = ProfilerData[k] or {};
-			ProfilerData[k].time = (ProfilerData[k].time or 0) + (ProfilerStored[k][k2].avg or 0);
-			ProfilerData[k].stored = ProfilerData[k].stored or {};
-			ProfilerData[k].stored[k2] = ProfilerStored[k][k2].avg;
 		end;
-	end;
 
-	ProfilerStored = {};
+		ProfilerStored = {};
+	end;
 end);
 
 concommand.Add("Profiler", function(player, command, arguments)
 	if (IsValid(player) and !player:IsSuperAdmin()) then
+		return;
+	end;
+
+	if (GetConVarNumber("profiler_enabled") != 1) then
+		MsgC(Color(255, 0, 0), "Profiler is not enabled! Use \"profiler_enabled 1\" to enabled it.");
 		return;
 	end;
 
